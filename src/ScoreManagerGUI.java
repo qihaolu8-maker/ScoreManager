@@ -24,6 +24,7 @@ import java.util.List;
 
 public class ScoreManagerGUI {
     private DataManager data;
+    private final String shortcutLabel = System.getProperty("os.name", "").startsWith("Mac") ? "Command" : "Ctrl";
 
     // 状态控制变量
     private SortMode currentSortMode = SortMode.SCORE;
@@ -78,19 +79,26 @@ public class ScoreManagerGUI {
 
         Font titleFont = new Font(Font.DIALOG, Font.BOLD, 18);
 
-        frame = new JFrame("ScoreManager Pro（V4.5bylqh）");
+        frame = new JFrame("ScoreManager Pro " + System.getProperty("scoremanager.version", "4.6.0"));
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         frame.addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) { handleCloseRequested(); }
         });
+        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER)) {
+            Desktop.getDesktop().setQuitHandler((event, response) -> {
+                response.cancelQuit();
+                SwingUtilities.invokeLater(this::handleCloseRequested);
+            });
+        }
         data.setSaveErrorHandler(error -> SwingUtilities.invokeLater(() ->
                 JOptionPane.showMessageDialog(frame,
                         "保存失败，当前修改仍保留在内存，请重试保存。\n" + errorMessage(error),
                         "存档失败", JOptionPane.ERROR_MESSAGE)));
-        frame.setSize(1280, 850);
-        frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
         frame.setLayout(new BorderLayout(15, 15));
-        frame.setMinimumSize(new Dimension(1350, 750));
+        UITools.fitWindowToScreen(frame, new Dimension(1350, 850), new Dimension(800, 560));
+        if (Toolkit.getDefaultToolkit().isFrameStateSupported(JFrame.MAXIMIZED_BOTH)) {
+            frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
+        }
         ((JPanel) frame.getContentPane()).setBorder(new EmptyBorder(15, 20, 15, 20));
 
         setupGlobalShortcuts();
@@ -118,7 +126,7 @@ public class ScoreManagerGUI {
         splitPane.setBorder(null);
         splitPane.setOpaque(false);
         splitPane.setResizeWeight(0.0);
-        frame.add(splitPane, BorderLayout.CENTER);
+        frame.add(UITools.createAdaptiveScrollPane(splitPane, new Dimension(1240, 660)), BorderLayout.CENTER);
 
         UITools.applyTheme("蓝白", frame);
         paintAccentButtons();
@@ -163,10 +171,16 @@ public class ScoreManagerGUI {
         themeContainer.add(themeBox);
 
         // 🚀 ✨ 核心挂载点：只有超级管理员 (admin) 才能看到账号管理按钮！
-        if ("admin".equals(data.currentUserRole)) {
+        if (data.isAdmin()) {
             JButton accManageBtn = new JButton("⚙️ 账号");
             accManageBtn.setForeground(new Color(100, 100, 100)); // 低调的高级灰
-            accManageBtn.addActionListener(e -> new AccountManagerDialog(frame, data).setVisible(true));
+            accManageBtn.addActionListener(e -> {
+                try {
+                    new AccountManagerDialog(frame, data).setVisible(true);
+                } catch (RuntimeException error) {
+                    JOptionPane.showMessageDialog(frame, errorMessage(error), "无法打开账号管理", JOptionPane.ERROR_MESSAGE);
+                }
+            });
             themeContainer.add(Box.createHorizontalStrut(10));
             themeContainer.add(UITools.wrap(accManageBtn));
         }
@@ -261,10 +275,10 @@ public class ScoreManagerGUI {
         JPanel globalActionsCard = UITools.createGlassPanel();
         globalActionsCard.setLayout(new GridLayout(6, 1, 0, 10));
 
-        undoBtn = new JButton("↩️ 撤销上一步 (Ctrl+Z)");
+        undoBtn = new JButton("↩️ 撤销上一步 (" + shortcutLabel + "+Z)");
         undoBtn.addActionListener(e -> handleUndo());
 
-        manualSaveBtn = new JButton("💾 强制安全存档 (Ctrl+S)");
+        manualSaveBtn = new JButton("💾 强制安全存档 (" + shortcutLabel + "+S)");
         manualSaveBtn.addActionListener(e -> handleManualSave());
 
         importCsvBtn = new JButton("📥 批量导入新生 (CSV)");
@@ -400,8 +414,11 @@ public class ScoreManagerGUI {
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2 && table.getSelectedRow() != -1) {
-                    int row = table.getSelectedRow();
+                int row = table.rowAtPoint(e.getPoint());
+                int column = table.columnAtPoint(e.getPoint());
+                // Editable cells keep their native double-click editor; the first three columns open the profile.
+                if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2 && row >= 0
+                        && column >= 0 && !table.isCellEditable(row, column)) {
                     String major = table.getValueAt(row, 1).toString();
                     String className = table.getValueAt(row, 2).toString();
                     String id = table.getValueAt(row, 3).toString();
@@ -680,11 +697,12 @@ public class ScoreManagerGUI {
 
     private void setupGlobalShortcuts() {
         InputMap im = frame.getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK), "UNDO_ACTION");
+        int shortcutMask = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_Z, shortcutMask), "UNDO_ACTION");
         frame.getRootPane().getActionMap().put("UNDO_ACTION", new AbstractAction() {
             @Override public void actionPerformed(ActionEvent e) { handleUndo(); }
         });
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK), "SAVE_ACTION");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_S, shortcutMask), "SAVE_ACTION");
         frame.getRootPane().getActionMap().put("SAVE_ACTION", new AbstractAction() {
             @Override public void actionPerformed(ActionEvent e) { manualSaveBtn.doClick(); }
         });
@@ -737,7 +755,7 @@ public class ScoreManagerGUI {
         data.saveAllData().whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
             if (!frame.isDisplayable()) return;
             manualSaveBtn.setEnabled(true);
-            manualSaveBtn.setText(error == null ? "💾 强制安全存档 (Ctrl+S)" : "保存失败，请重试 (Ctrl+S)");
+            manualSaveBtn.setText((error == null ? "💾 强制安全存档 (" : "保存失败，请重试 (") + shortcutLabel + "+S)");
             if (error == null) UITools.Toast.showSuccess(frame, "数据已安全存档！");
         }));
     }
@@ -1214,7 +1232,17 @@ public class ScoreManagerGUI {
         chooser.setFileFilter(new FileNameExtensionFilter("SQLite 存档 (*.db)", "db"));
         if (chooser.showOpenDialog(frame) == JFileChooser.APPROVE_OPTION) {
             try {
-                if (data.changeDataFile(chooser.getSelectedFile())) fullRefresh();
+                if (data.changeDataFile(chooser.getSelectedFile())) {
+                    searchDebounceTimer.stop();
+                    logSearchDebounceTimer.stop();
+                    closing = true;
+                    if (Desktop.isDesktopSupported()
+                            && Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER)) {
+                        Desktop.getDesktop().setQuitHandler(null);
+                    }
+                    frame.dispose();
+                    new LoginFrame(data, () -> new ScoreManagerGUI(data)).setVisible(true);
+                }
             } catch (RuntimeException ex) {
                 JOptionPane.showMessageDialog(frame, "未切换当前存档：\n" + errorMessage(ex), "切换失败", JOptionPane.ERROR_MESSAGE);
             } finally { updateFileDisplay(); }
@@ -1236,7 +1264,7 @@ public class ScoreManagerGUI {
 
     private void handleUndo() { if (data.undo()) { fullRefresh(); updateTrashTable(); updateUndoButtonText(); UITools.Toast.showInfo(frame, "↩️ 已撤销"); } }
 
-    private void updateUndoButtonText() { if (undoBtn != null) undoBtn.setText(data.getUndoSize() == 0 ? "↩️ 撤销上一步 (Ctrl+Z)" : "↩️ 撤销上一步 (" + data.getUndoSize() + ")"); }
+    private void updateUndoButtonText() { if (undoBtn != null) undoBtn.setText(data.getUndoSize() == 0 ? "↩️ 撤销上一步 (" + shortcutLabel + "+Z)" : "↩️ 撤销上一步 (" + data.getUndoSize() + ")"); }
 
     private enum SortMode {ID, NAME, SCORE}
     private enum LogSortMode {TIME, CLASS, NAME}

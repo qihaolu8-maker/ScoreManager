@@ -1,14 +1,6 @@
 # ScoreManager 4.6.0
 
-[简体中文](#简体中文) · [English](#english) · [English README](README.en.md)
-
-学生积分管理桌面应用，支持 Windows、Linux 和 macOS。使用 Java Swing、FlatLaf、SQLite 和 XChart。
-
-## 简体中文
-
-### 下载即用
-
-从 [Releases](https://github.com/qihaolu8-maker/ScoreManager/releases/latest) 下载与你的系统和芯片相符的运行包。**每个运行包都自带 Java，无需另装 Java。** 解压整个压缩包后启动，不要只复制可执行文件，也不要把 GitHub 的 “Source code” 压缩包当作软件安装包。
+[简体中文 / Bilingual README](README.md)
 
 | 系统 / Platform | 下载 / Download | 启动 / Launch |
 | --- | --- | --- |
@@ -17,43 +9,6 @@
 | macOS Apple Silicon / ARM64 | [ScoreManager-4.6.0-macos-arm64.zip](https://github.com/qihaolu8-maker/ScoreManager/releases/download/v4.6.0/ScoreManager-4.6.0-macos-arm64.zip) | `ScoreManager.app` |
 | macOS Intel / x64 | [ScoreManager-4.6.0-macos-x64.zip](https://github.com/qihaolu8-maker/ScoreManager/releases/download/v4.6.0/ScoreManager-4.6.0-macos-x64.zip) | `ScoreManager.app` |
 
-[校验文件 SHA256SUMS.txt](https://github.com/qihaolu8-maker/ScoreManager/releases/download/v4.6.0/SHA256SUMS.txt)。Windows/macOS 为 ZIP；Linux 为保留执行权限的 tar.gz。
-
-### 首次使用
-
-1. 完整解压，启动上表中的程序。macOS 可将整个 `ScoreManager.app` 拖入“应用程序”。
-2. 新数据库会显示“创建管理员”，自行设置账号和至少 8 个字符的密码。**4.6.0 不再提供固定默认账号。**
-3. 已有数据库继续使用原账号；旧明文密码在成功登录时升级为加盐哈希。更新前请退出旧版本并备份数据库。密码升级后的数据库应继续使用新版，旧版不能验证新哈希。
-4. 可导入 [50 人虚构测试 CSV](examples/ScoreManager-50-students.csv)：2 个专业、5 个班级，每班 10 人。导入会添加到当前数据库。
-
-软件具有专业/班级管理、学生积分增减、变更历史、搜索排序、图表统计、回收站、撤销、CSV 导入导出和 HTML 报表功能。管理员可管理本地账号，账号列表不再显示密码。
-
-### 安装与使用说明
-
-- [Windows / Linux / macOS 中文安装教程](docs/INSTALL.zh-CN.md)
-- [中文使用说明与数据迁移](docs/USER_GUIDE.zh-CN.md)
-- [English installation guide](docs/INSTALL.en.md)
-- [English user guide](docs/USER_GUIDE.en.md)
-- [源码构建、测试与发布 / Build, test and release](docs/BUILD.md)
-- [更新记录 / Changelog](CHANGELOG.md)
-
-### 数据保存位置
-
-| 系统 | 默认数据目录 |
-| --- | --- |
-| Windows | `%USERPROFILE%\AppData\LocalLow\ScoreManager` |
-| macOS | `~/Library/Application Support/ScoreManager` |
-| Linux | `$XDG_DATA_HOME/ScoreManager`；未设置绝对路径时为 `~/.local/share/ScoreManager` |
-
-`settings.properties` 记录上次使用的数据库位置，`ScoreData.db` 保存学生、积分、历史记录和账号，`backups/` 位于当前数据库同级目录。切换数据库后须重新登录该数据库的账号。移动应用文件夹不会自动移动个人数据。
-
-### 兼容性与发布状态
-
-使用同一套源码按系统原生打包。CI 在 Windows Server 2022、Ubuntu 22.04、macOS 15（ARM64 与 Intel）上进行编译、数据库回归和隔离启动检查，执行结果见 [Actions](https://github.com/qihaolu8-maker/ScoreManager/actions/workflows/release.yml)。这类检查不等同于所有真实电脑、桌面环境和打印设备的完整人工验收。
-
-Windows/macOS 应用尚未购买开发者签名证书或完成 Apple 公证，首次打开可能出现系统提示。Linux 需要 glibc 系统及图形桌面（X11 或 XWayland），不是无界面的服务器程序。请阅读对应安装教程。
-
-## English
 
 ScoreManager is a Java Swing desktop application for managing student points on Windows, Linux and macOS. It uses FlatLaf for themes, SQLite for local storage and XChart for charts.
 

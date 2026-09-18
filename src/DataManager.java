@@ -39,7 +39,8 @@ public class DataManager {
     public DataManager(String defaultFilePath, ProgressListener listener) {
         if (listener != null) this.listener = listener;
         this.listener.onProgress(10, "正在初始化环境配置...");
-        File appDataDir = new File(System.getProperty("user.home"), "AppData\\LocalLow\\ScoreManager");
+        File appDataDir = applicationDataDirectory(
+                System.getProperty("os.name", ""), Paths.get(System.getProperty("user.home"))).toFile();
         settingsFile = new File(appDataDir, "settings.properties").toPath();
         File passedFile = new File(defaultFilePath);
         rememberLastFile = passedFile.getParent() == null;
@@ -67,6 +68,29 @@ public class DataManager {
         this.listener.onProgress(95, "正在生成本地安全备份...");
         autoBackup();
         this.listener.onProgress(100, "加载完成");
+    }
+
+    static Path applicationDataDirectory(String osName, Path userHome) {
+        return applicationDataDirectory(osName, userHome, System.getenv("XDG_DATA_HOME"));
+    }
+
+    static Path applicationDataDirectory(String osName, Path userHome, String xdgDataHome) {
+        String platform = osName.toLowerCase(Locale.ROOT);
+        if (platform.startsWith("mac")) {
+            return userHome.resolve("Library").resolve("Application Support").resolve("ScoreManager");
+        }
+        if (platform.startsWith("windows")) {
+            return userHome.resolve("AppData").resolve("LocalLow").resolve("ScoreManager");
+        }
+        if (xdgDataHome != null && !xdgDataHome.isBlank()) {
+            try {
+                Path configured = Paths.get(xdgDataHome);
+                if (configured.isAbsolute()) return configured.resolve("ScoreManager");
+            } catch (InvalidPathException ignored) {
+                // The XDG specification requires an absolute, usable path.
+            }
+        }
+        return userHome.resolve(".local").resolve("share").resolve("ScoreManager");
     }
 
     private String databaseUrl(File file) { return "jdbc:sqlite:" + file.getAbsolutePath(); }
@@ -131,15 +155,16 @@ public class DataManager {
             stmt.execute("CREATE TABLE IF NOT EXISTS logs (time TEXT, class_name TEXT, student_id TEXT, student_name TEXT, change_val TEXT, remark TEXT)");
             stmt.execute("CREATE TABLE IF NOT EXISTS trash (type TEXT, name TEXT, parent_info TEXT, data_json TEXT, delete_time TEXT)");
             stmt.execute("INSERT OR IGNORE INTO majors (name) SELECT DISTINCT major_name FROM major_classes WHERE major_name IS NOT NULL");
-            // ✨ 新增：创建多账号用户表
-            stmt.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT);");
-
-            // ✨ 新增：如果用户表是空的，自动注入两个默认测试账号防止登不进去
-            ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM users");
-            if (rs.next() && rs.getInt(1) == 0) {
-                stmt.execute("INSERT INTO users VALUES ('lqh', '050128', 'admin');"); // 超管账号
-                stmt.execute("INSERT INTO users VALUES ('teacher', 'teacher123', 'user');"); // 普通老师账号
+            stmt.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, "
+                    + "password_scheme TEXT NOT NULL DEFAULT 'plain')");
+            boolean hasPasswordScheme = false;
+            try (ResultSet columns = stmt.executeQuery("PRAGMA table_info(users)")) {
+                while (columns.next()) {
+                    if ("password_scheme".equals(columns.getString("name"))) hasPasswordScheme = true;
+                }
             }
+            if (!hasPasswordScheme)
+                stmt.execute("ALTER TABLE users ADD COLUMN password_scheme TEXT NOT NULL DEFAULT 'plain'");
 
             try { Files.setAttribute(file.toPath(), "dos:hidden", true); } catch (Exception ignored) {}
         } catch (SQLException e) {
@@ -327,6 +352,7 @@ public class DataManager {
         dbUrl = databaseUrl(target);
         storage = loaded;
         clearUndoStack();
+        logout();
         return true;
     }
 
@@ -584,69 +610,168 @@ public class DataManager {
         final AppStorage storage;
         StateSnapshot(AppStorage storage) { this.storage = storage; }
     }
-    // ==========================================
-    // 🔐 商业级：账号与权限管理引擎 (V2.0 终极版)
-    // ==========================================
-    public String currentUserRole = "user";
-    public String currentUsername = "";
+    private String currentUsername = "";
 
-    public boolean verifyLogin(String username, String password) {
-        String sql = "SELECT * FROM users WHERE username = ? AND password = ?";
-        try (Connection conn = DriverManager.getConnection(dbUrl);
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, username);
-            pstmt.setString(2, password);
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                this.currentUserRole = rs.getString("role");
-                this.currentUsername = rs.getString("username");
-                return true;
-            }
-            return false;
-        } catch (SQLException e) { e.printStackTrace(); return false; }
-    }
+    public synchronized String getCurrentUsername() { return currentUsername; }
 
-    // ✨ 升级：现在连着明文密码一起查出来
-    public List<String[]> getAllUsers() {
-        List<String[]> users = new ArrayList<>();
+    public synchronized void logout() { currentUsername = ""; }
+
+    public synchronized boolean hasUsers() {
         try (Connection conn = DriverManager.getConnection(dbUrl);
              Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT username, password, role FROM users")) {
-            while (rs.next()) {
-                users.add(new String[]{rs.getString("username"), rs.getString("password"), rs.getString("role")});
-            }
-        } catch (SQLException e) { e.printStackTrace(); }
-        return users;
+             ResultSet rs = stmt.executeQuery("SELECT 1 FROM users LIMIT 1")) {
+            return rs.next();
+        } catch (SQLException e) { throw new IllegalStateException("无法读取本地账号", e); }
     }
 
-    public boolean addUser(String username, String password, String role) {
-        String sql = "INSERT INTO users (username, password, role) VALUES (?, ?, ?)";
-        try (Connection conn = DriverManager.getConnection(dbUrl); PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, username); pstmt.setString(2, password); pstmt.setString(3, role);
-            pstmt.executeUpdate(); return true;
+    /** Only an empty database can create its first administrator without an existing session. */
+    public synchronized boolean createFirstAdmin(String username, String password) {
+        validateCredentials(username, password);
+        String sql = "INSERT INTO users (username, password, role, password_scheme) "
+                + "SELECT ?, ?, 'admin', ? WHERE NOT EXISTS (SELECT 1 FROM users)";
+        try (Connection conn = DriverManager.getConnection(dbUrl);
+             PreparedStatement p = conn.prepareStatement(sql)) {
+            p.setString(1, username); p.setString(2, PasswordHasher.hash(password));
+            p.setString(3, PasswordHasher.SCHEME);
+            if (p.executeUpdate() != 1) return false;
+            currentUsername = username;
+            return true;
+        } catch (SQLException e) { throw new IllegalStateException("无法创建管理员账号", e); }
+    }
+
+    public synchronized boolean verifyLogin(String username, String password) {
+        logout();
+        if (username == null || password == null) return false;
+        try (Connection conn = DriverManager.getConnection(dbUrl)) {
+            String stored, scheme, role;
+            try (PreparedStatement p = conn.prepareStatement(
+                    "SELECT password, password_scheme, role FROM users WHERE username = ?")) {
+                p.setString(1, username);
+                try (ResultSet rs = p.executeQuery()) {
+                    if (!rs.next()) return false;
+                    stored = rs.getString("password"); scheme = rs.getString("password_scheme");
+                    role = rs.getString("role");
+                }
+            }
+            if (!isValidRole(role)) return false;
+            if (PasswordHasher.SCHEME.equals(scheme)) {
+                if (!PasswordHasher.verify(password, stored)) return false;
+            } else if ("plain".equals(scheme)) {
+                if (!PasswordHasher.verifyLegacy(password, stored)) return false;
+                // A successful legacy login upgrades only this account, without changing its password.
+                try (PreparedStatement p = conn.prepareStatement("UPDATE users SET password = ?, password_scheme = ? "
+                        + "WHERE username = ? AND password = ? AND password_scheme = 'plain'")) {
+                    p.setString(1, PasswordHasher.hash(password)); p.setString(2, PasswordHasher.SCHEME);
+                    p.setString(3, username); p.setString(4, stored);
+                    if (p.executeUpdate() != 1) return false;
+                }
+            } else return false;
+            currentUsername = username;
+            return true;
+        } catch (SQLException e) { throw new IllegalStateException("无法读取或更新本地账号", e); }
+    }
+
+    public synchronized boolean isAdmin() {
+        try (Connection conn = DriverManager.getConnection(dbUrl)) {
+            return isAdmin(conn);
+        } catch (SQLException e) { throw new IllegalStateException("无法检查账号权限", e); }
+    }
+
+    private boolean isAdmin(Connection conn) throws SQLException {
+        if (currentUsername.isEmpty()) return false;
+        try (PreparedStatement p = conn.prepareStatement("SELECT role FROM users WHERE username = ?")) {
+            p.setString(1, currentUsername);
+            try (ResultSet rs = p.executeQuery()) { return rs.next() && "admin".equals(rs.getString(1)); }
+        }
+    }
+
+    private void requireAdmin(Connection conn) throws SQLException {
+        if (!isAdmin(conn)) throw new SecurityException("需要使用当前存档的管理员账号登录");
+    }
+
+    private static boolean isValidRole(String role) { return "admin".equals(role) || "user".equals(role); }
+
+    private static void validateUsername(String username) {
+        if (username == null || username.isBlank() || username.length() > 64
+                || !username.equals(username.trim()) || username.chars().anyMatch(Character::isISOControl))
+            throw new IllegalArgumentException("账号需为 1–64 个字符，不能包含控制字符或首尾空格");
+    }
+
+    private static void validateCredentials(String username, String password) {
+        validateUsername(username);
+        if (password == null || password.length() < 8 || password.length() > 256)
+            throw new IllegalArgumentException("新密码长度需为 8–256 个字符");
+    }
+
+    /** Returns usernames and roles only. Passwords and hashes never leave the account service. */
+    public synchronized List<String[]> getAllUsers() {
+        List<String[]> users = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection(dbUrl)) {
+            requireAdmin(conn);
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT username, role FROM users ORDER BY username")) {
+                while (rs.next()) users.add(new String[]{rs.getString("username"), rs.getString("role")});
+            }
+            return users;
+        } catch (SQLException e) { throw new IllegalStateException("无法读取账号列表", e); }
+    }
+
+    public synchronized boolean addUser(String username, String password, String role) {
+        validateCredentials(username, password);
+        if (!isValidRole(role)) throw new IllegalArgumentException("无效的账号角色");
+        try (Connection conn = DriverManager.getConnection(dbUrl)) {
+            conn.setAutoCommit(false);
+            requireAdmin(conn);
+            try (PreparedStatement p = conn.prepareStatement(
+                    "INSERT INTO users (username, password, role, password_scheme) VALUES (?, ?, ?, ?)")) {
+                p.setString(1, username); p.setString(2, PasswordHasher.hash(password));
+                p.setString(3, role); p.setString(4, PasswordHasher.SCHEME);
+                p.executeUpdate();
+            }
+            conn.commit();
+            return true;
         } catch (SQLException e) { return false; }
     }
 
-    // ✨ 新增：超管终极核武器 - 修改账号、密码和权限
-    public boolean updateUser(String oldUsername, String newUsername, String newPassword, String newRole) {
-        String sql = "UPDATE users SET username = ?, password = ?, role = ? WHERE username = ?";
-        try (Connection conn = DriverManager.getConnection(dbUrl); PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, newUsername);
-            pstmt.setString(2, newPassword);
-            pstmt.setString(3, newRole);
-            pstmt.setString(4, oldUsername);
-            pstmt.executeUpdate();
-            // 如果超管改了自己当前正在使用的账号名，必须同步更新内存，防止被踢下线
-            if (oldUsername.equals(this.currentUsername)) this.currentUsername = newUsername;
+    /** A null or empty newPassword preserves the existing password, including unmigrated legacy ones. */
+    public synchronized boolean updateUser(String oldUsername, String newUsername, String newPassword, String newRole) {
+        validateUsername(newUsername);
+        boolean changePassword = newPassword != null && !newPassword.isEmpty();
+        if (changePassword) validateCredentials(newUsername, newPassword);
+        if (!isValidRole(newRole)) throw new IllegalArgumentException("无效的账号角色");
+        try (Connection conn = DriverManager.getConnection(dbUrl)) {
+            conn.setAutoCommit(false);
+            requireAdmin(conn);
+            // Keep the current administrator usable until another administrator performs the change.
+            if (Objects.equals(oldUsername, currentUsername) && !"admin".equals(newRole)) return false;
+            String sql = changePassword
+                    ? "UPDATE users SET username = ?, role = ?, password = ?, password_scheme = ? WHERE username = ?"
+                    : "UPDATE users SET username = ?, role = ? WHERE username = ?";
+            try (PreparedStatement p = conn.prepareStatement(sql)) {
+                p.setString(1, newUsername); p.setString(2, newRole);
+                if (changePassword) {
+                    p.setString(3, PasswordHasher.hash(newPassword)); p.setString(4, PasswordHasher.SCHEME);
+                    p.setString(5, oldUsername);
+                } else p.setString(3, oldUsername);
+                if (p.executeUpdate() != 1) return false;
+            }
+            conn.commit();
+            if (Objects.equals(oldUsername, currentUsername)) currentUsername = newUsername;
             return true;
-        } catch (SQLException e) { return false; } // 如果新账号名和别人撞车了，会报错返回 false
+        } catch (SQLException e) { return false; }
     }
 
-    public boolean deleteUser(String username) {
-        if ("lqh".equals(username) || username.equals(this.currentUsername)) return false;
-        String sql = "DELETE FROM users WHERE username = ?";
-        try (Connection conn = DriverManager.getConnection(dbUrl); PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, username); pstmt.executeUpdate(); return true;
+    public synchronized boolean deleteUser(String username) {
+        try (Connection conn = DriverManager.getConnection(dbUrl)) {
+            conn.setAutoCommit(false);
+            requireAdmin(conn);
+            if (Objects.equals(username, currentUsername)) return false;
+            try (PreparedStatement p = conn.prepareStatement("DELETE FROM users WHERE username = ?")) {
+                p.setString(1, username);
+                if (p.executeUpdate() != 1) return false;
+            }
+            conn.commit();
+            return true;
         } catch (SQLException e) { return false; }
     }
 }

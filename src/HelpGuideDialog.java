@@ -6,9 +6,8 @@ public class HelpGuideDialog extends JDialog {
     public HelpGuideDialog(JFrame parentFrame) {
         super(parentFrame, "ℹ️ 快捷键与系统操作指南", true);
 
-        setSize(520, 600);
-
-        setMinimumSize(new Dimension(600, 720));
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        UITools.fitWindowToScreen(this, new Dimension(640, 720), new Dimension(480, 360));
 
         setLocationRelativeTo(parentFrame);
         setLayout(new BorderLayout(15, 15));
@@ -44,31 +43,32 @@ public class HelpGuideDialog extends JDialog {
         gbc.weightx = 1.0;
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
+        String shortcutKey = System.getProperty("os.name", "").startsWith("Mac") ? "Command" : "Ctrl";
         String[] helps = {
                 "【键盘与基础快捷键】",
-                "⌨️ Ctrl + S：强制将当前所有数据安全写入本地 SQLite 数据库",
-                "⌨️ Ctrl + Z：智能撤销上一步操作 (大数据量下自动开启内存保护机制)",
-                "⌨️ Ctrl + F / 🔍搜索：搭载 300ms 防抖引擎，海量数据下打字亦丝滑流畅",
-                "🗑️ Delete 键：在主表格中选中学生后，按此键直接将其移至数据回收站",
+                "⌨️ " + shortcutKey + " + S：强制将当前所有数据安全写入本地 SQLite 数据库",
+                "⌨️ " + shortcutKey + " + Z：智能撤销上一步操作 (大数据量下自动开启内存保护机制)",
+                "🔍 搜索框：输入姓名、学号、班级或专业筛选学生",
+                "🗑️ Delete 键：选中学生后移至回收站；Mac 紧凑键盘使用 Fn + Delete",
                 "",
                 "【鼠标与高级交互体验】",
-                "🖱️ 双击表格整行：瞬间弹出该学生的「专属数字档案」与「加分时间轴」",
-                "🖱️ 双击单元格：支持直接在表格内就地修改学号、姓名或总分（全自动记入日志）",
+                "🖱️ 双击排名、专业或班级列：打开该学生的档案与加分时间轴",
+                "🖱️ 双击学号、姓名或总分单元格：直接修改内容，按 Enter 确认",
                 "🖱️ 左侧树状拖拽：鼠标长按班级节点，可跨专业随意拖拽，实现组织架构重组",
-                "🖱️ 物理阻尼滑动：所有数据表格与可视化大屏均支持触控板级别的平滑惯性拖拽",
+                "🖱️ 表格支持鼠标拖动滚动；小屏幕可使用主窗口外侧滚动条访问完整内容",
                 "",
                 "【课堂积分与日志追踪】",
                 "🎀 极速快捷加分：底部面板选定学生后，通过预设分值下拉框一键完成高频加扣分",
                 "✍️ 完整事由录入：支持手动输入精确分值与详细备注，敲击 Enter 极速提交",
-                "📜 历史变动审计：全自动记录全校每一笔分数的增减时间、操作人及具体变更轨迹",
+                "📜 历史变动日志：记录分数增减、时间及备注，支持筛选和修改备注",
                 "",
                 "【数据可视化与报表分发】",
                 "📈 实时数据大屏：自动渲染各班平均分对比（绝对防欺诈标尺）与全校分数段分布饼图",
-                "🖨️ 网页排版导出：生成自带高亮奖牌的精美 HTML 报表，全平台无乱码完美打印",
-                "📊 工业级导入导出：支持自带高级正则过滤的 CSV 新生批量导入，以及纯数据导出",
+                "🖨️ 网页排版导出：生成 HTML 报表，可在浏览器中打开并打印",
+                "📊 CSV 导入导出：批量导入学生，或导出当前积分榜供表格软件打开",
                 "",
                 "【系统调度与容错保护】",
-                "🎨 沉浸式 UI 主题：控制中心支持一键无缝切换 蓝白/粉白/白绿/夜间 等多套视觉风格",
+                "🎨 UI 主题：控制中心支持切换蓝白、粉白、白绿三套主题",
                 "♻️ 跨维度回收站：任何被删除的班级、专业或学生，均可在此追溯防源并一键满血复活",
                 "📁 物理存档管理：支持一键切换、重命名，或将整个海量数据库安全转移至 U盘带走"
         };
@@ -122,6 +122,9 @@ public class HelpGuideDialog extends JDialog {
         closeBtn.setFont(new Font(Font.DIALOG, Font.BOLD, 16));
         closeBtn.putClientProperty("JButton.buttonType", "default");
         closeBtn.addActionListener(e -> dispose());
+        getRootPane().setDefaultButton(closeBtn);
+        getRootPane().registerKeyboardAction(e -> dispose(), KeyStroke.getKeyStroke("ESCAPE"),
+                JComponent.WHEN_IN_FOCUSED_WINDOW);
         JPanel btnPanel = new JPanel();
         btnPanel.setOpaque(false);
         btnPanel.add(closeBtn);

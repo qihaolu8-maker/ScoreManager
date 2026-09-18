@@ -8,6 +8,51 @@ import java.awt.event.MouseEvent;
 
 public class UITools {
 
+    /** Keep windows inside the current monitor's usable logical bounds, including HiDPI displays. */
+    public static void fitWindowToScreen(Window window, Dimension preferredSize, Dimension minimumSize) {
+        GraphicsConfiguration configuration = window.getGraphicsConfiguration();
+        Rectangle bounds = configuration.getBounds();
+        Insets insets = Toolkit.getDefaultToolkit().getScreenInsets(configuration);
+        int availableWidth = Math.max(1, bounds.width - insets.left - insets.right);
+        int availableHeight = Math.max(1, bounds.height - insets.top - insets.bottom);
+        window.setMinimumSize(new Dimension(Math.min(minimumSize.width, availableWidth),
+                Math.min(minimumSize.height, availableHeight)));
+        window.setSize(Math.min(preferredSize.width, availableWidth),
+                Math.min(preferredSize.height, availableHeight));
+    }
+
+    /** Preserve working control sizes and expose scrollbars when the screen is too small. */
+    public static JScrollPane createAdaptiveScrollPane(JComponent content, Dimension minimumContentSize) {
+        class AdaptivePanel extends JPanel implements Scrollable {
+            AdaptivePanel() {
+                super(new BorderLayout());
+                setOpaque(false);
+                add(content, BorderLayout.CENTER);
+            }
+            @Override public Dimension getPreferredSize() {
+                return new Dimension(minimumContentSize);
+            }
+            @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+            @Override public int getScrollableUnitIncrement(Rectangle r, int orientation, int direction) { return 24; }
+            @Override public int getScrollableBlockIncrement(Rectangle r, int orientation, int direction) {
+                return Math.max(24, (orientation == SwingConstants.HORIZONTAL ? r.width : r.height) - 24);
+            }
+            @Override public boolean getScrollableTracksViewportWidth() {
+                return getParent() instanceof JViewport && getParent().getWidth() >= minimumContentSize.width;
+            }
+            @Override public boolean getScrollableTracksViewportHeight() {
+                return getParent() instanceof JViewport && getParent().getHeight() >= minimumContentSize.height;
+            }
+        }
+        JScrollPane scrollPane = new JScrollPane(new AdaptivePanel());
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.setOpaque(false);
+        scrollPane.getViewport().setOpaque(false);
+        scrollPane.getHorizontalScrollBar().setUnitIncrement(24);
+        scrollPane.getVerticalScrollBar().setUnitIncrement(24);
+        return scrollPane;
+    }
+
     // ✨ 1. 开启极致现代化隐藏开关
     public static void setupGlobalAppleStyle() {
         Font globalFont = new Font(Font.DIALOG, Font.PLAIN, 15); // 字体稍微调小一点点，更精致
@@ -326,8 +371,18 @@ public class UITools {
         public Toast(JFrame owner, String message, Color bgColor) {
             super(owner);
             setUndecorated(true);
+            setFocusableWindowState(false);
             setLayout(new BorderLayout());
-            setBackground(new Color(0, 0, 0, 0));
+            setBackground(new Color(bgColor.getRed(), bgColor.getGreen(), bgColor.getBlue()));
+            GraphicsDevice device = getGraphicsConfiguration().getDevice();
+            if (device.isWindowTranslucencySupported(GraphicsDevice.WindowTranslucency.PERPIXEL_TRANSLUCENT)
+                    && getGraphicsConfiguration().isTranslucencyCapable()) {
+                try {
+                    setBackground(new Color(0, 0, 0, 0));
+                } catch (UnsupportedOperationException ignored) {
+                    // Some Linux window managers advertise translucency without implementing it.
+                }
+            }
 
             JPanel panel = new JPanel() {
                 @Override
@@ -363,28 +418,42 @@ public class UITools {
         }
 
         private static void show(JFrame owner, String message, Color bgColor) {
+            if (!SwingUtilities.isEventDispatchThread()) {
+                SwingUtilities.invokeLater(() -> show(owner, message, bgColor));
+                return;
+            }
             Toast toast = new Toast(owner, message, bgColor);
             toast.setLocationRelativeTo(owner);
             toast.setLocation(toast.getLocation().x, toast.getLocation().y - owner.getHeight() / 3);
-            toast.setOpacity(0.0f);
-            toast.setVisible(true);
-            new Thread(() -> {
+            boolean[] animate = {toast.getGraphicsConfiguration().getDevice()
+                    .isWindowTranslucencySupported(GraphicsDevice.WindowTranslucency.TRANSLUCENT)};
+            if (animate[0]) {
                 try {
-                    for (float i = 0; i <= 1.0f; i += 0.1f) {
-                        final float op = i;
-                        SwingUtilities.invokeLater(() -> toast.setOpacity(op));
-                        Thread.sleep(20);
-                    }
-                    Thread.sleep(1500);
-                    for (float i = 1.0f; i >= 0f; i -= 0.05f) {
-                        final float op = i;
-                        SwingUtilities.invokeLater(() -> toast.setOpacity(op));
-                        Thread.sleep(20);
-                    }
-                    toast.dispose();
-                } catch (Exception ignored) {
+                    toast.setOpacity(0.0f);
+                } catch (UnsupportedOperationException ignored) {
+                    animate[0] = false;
                 }
-            }).start();
+            }
+            toast.setVisible(true);
+            long start = System.nanoTime();
+            Timer timer = new Timer(20, e -> {
+                long elapsed = (System.nanoTime() - start) / 1_000_000;
+                if (elapsed >= 1900 || !toast.isDisplayable()) {
+                    ((Timer) e.getSource()).stop();
+                    toast.dispose();
+                    return;
+                }
+                if (animate[0]) {
+                    float opacity = elapsed < 200 ? elapsed / 200.0f
+                            : elapsed > 1700 ? (1900 - elapsed) / 200.0f : 1.0f;
+                    try {
+                        toast.setOpacity(opacity);
+                    } catch (UnsupportedOperationException ignored) {
+                        animate[0] = false;
+                    }
+                }
+            });
+            timer.start();
         }
     }
 }

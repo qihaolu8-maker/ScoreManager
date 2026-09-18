@@ -37,6 +37,8 @@ bin/
 /build/
 *.class
 *.log
+__pycache__/
+*.py[cod]
 
 ### Local student data, settings, and backups ###
 /backups/
